@@ -2,10 +2,13 @@
 import PackageDescription
 import Foundation
 
-// Path to the mmgo build directory containing libmmgo.dylib + libmmgo.h.
-// Override with MMGO_BUILD_DIR env var if your layout differs.
+// Path to the directory containing libmmgo.dylib. Defaults to the bundled
+// `Frameworks/` directory next to this Package.swift so the repo is
+// self-contained. Override with MMGO_BUILD_DIR to point at a fresher build
+// (e.g. a sibling mmgo checkout).
+let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let mmgoBuildDir = ProcessInfo.processInfo.environment["MMGO_BUILD_DIR"]
-    ?? "/Users/maoyuankao/src/mmgo/build"
+    ?? "\(packageDir)/Frameworks"
 
 let package = Package(
     name: "MmgoMac",

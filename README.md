@@ -21,29 +21,6 @@ C-shared library (`libmmgo.dylib`).
       MermaidRenderer.swift
 ```
 
-## Build the Go shared library
-
-From `~/src/mmgo/`:
-
-```bash
-CGO_CFLAGS="-mmacosx-version-min=13.0" \
-CGO_LDFLAGS="-mmacosx-version-min=13.0 -Wl,-install_name,@rpath/libmmgo.dylib" \
-go build -buildmode=c-shared -o build/libmmgo.dylib ./cmd/mmgolib
-```
-
-The `min` flag pins the dylib's deployment target to match the Swift app
-(macOS 13). The `-install_name` flag rewrites the dylib's recorded path
-to `@rpath/libmmgo.dylib`, so the Swift executable's embedded rpath is
-consulted at load time.
-
-That produces `build/libmmgo.dylib` and `build/libmmgo.h`. The header is
-already copied into `Sources/CMmgo/`; if you change the cgo signatures,
-re-copy it:
-
-```bash
-cp ~/src/mmgo/build/libmmgo.h Sources/CMmgo/libmmgo.h
-```
-
 ## Run the app
 
 ```bash
@@ -51,14 +28,41 @@ cd ~/src/mmgo-mac
 swift run
 ```
 
-If your `mmgo` checkout lives elsewhere:
+A prebuilt `Frameworks/libmmgo.dylib` (arm64, macOS 14+) is bundled in
+the repo, so no separate `mmgo` checkout is needed for a default build.
+`Package.swift` embeds an `@rpath` entry pointing at `Frameworks/`, so
+the dylib is found at runtime without `DYLD_LIBRARY_PATH`.
+
+## Rebuilding the Go shared library (optional)
+
+If you have a local [`mmgo`](https://github.com/julianshen/mmgo) checkout
+and want a fresher build, rebuild the dylib from there:
 
 ```bash
+cd ~/src/mmgo
+CGO_CFLAGS="-mmacosx-version-min=14.0" \
+CGO_LDFLAGS="-mmacosx-version-min=14.0 -Wl,-install_name,@rpath/libmmgo.dylib" \
+go build -buildmode=c-shared -o build/libmmgo.dylib ./cmd/mmgolib
+```
+
+The `min` flag pins the dylib's deployment target to match the Swift app
+(macOS 14). The `-install_name` flag rewrites the dylib's recorded path
+to `@rpath/libmmgo.dylib`, so the Swift executable's embedded rpath is
+consulted at load time.
+
+Then either copy the result into `Frameworks/` or point at it via env var:
+
+```bash
+cp ~/src/mmgo/build/libmmgo.dylib Frameworks/libmmgo.dylib
+# or:
 MMGO_BUILD_DIR=/path/to/mmgo/build swift run
 ```
 
-`Package.swift` embeds an `@rpath` entry pointing at `MMGO_BUILD_DIR`,
-so the dylib is found at runtime without `DYLD_LIBRARY_PATH`.
+If the cgo signatures changed, re-copy the header too:
+
+```bash
+cp ~/src/mmgo/build/libmmgo.h Sources/CMmgo/libmmgo.h
+```
 
 ## Using the app
 

@@ -11,13 +11,13 @@ swift run          # build and launch the SwiftUI app
 
 There is no test target. Lint/format tools are not configured.
 
-The app links against `libmmgo.dylib`, which lives in a **sibling repo** at `~/src/mmgo/build/`. If your checkout is elsewhere, point `Package.swift` at it via:
+The app links against `Frameworks/libmmgo.dylib`, which is **bundled in the repo** (arm64, macOS 14+). The default `MMGO_BUILD_DIR` in `Package.swift` resolves to `<package>/Frameworks` via `#filePath`, so a fresh checkout builds without external dependencies. To use a fresher build from a sibling `mmgo` checkout:
 
 ```bash
 MMGO_BUILD_DIR=/path/to/mmgo/build swift run
 ```
 
-If `libmmgo.dylib` is missing, rebuild it from the `mmgo` repo with the exact flags in `README.md` — the deployment-target pin (`-mmacosx-version-min=13.0`) and `-install_name @rpath/libmmgo.dylib` are both load-bearing. Building the dylib without `@rpath` install_name will make `swift run` fail at load time even if linking succeeds.
+If you regenerate the dylib, the deployment-target pin (`-mmacosx-version-min=14.0`) and `-install_name @rpath/libmmgo.dylib` are both load-bearing. Building the dylib without `@rpath` install_name will make `swift run` fail at load time even if linking succeeds.
 
 If cgo signatures change in `mmgo`, copy the regenerated header back in:
 
