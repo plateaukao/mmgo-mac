@@ -13,6 +13,8 @@ struct MermaidEditor: NSViewRepresentable {
         scroll.autohidesScrollers = true
 
         let tv = scroll.documentView as! NSTextView
+        tv.isEditable = true
+        tv.isSelectable = true
         tv.isRichText = false
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.isAutomaticDashSubstitutionEnabled = false
