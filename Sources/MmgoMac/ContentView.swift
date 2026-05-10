@@ -15,39 +15,51 @@ private let historyKey = "mermaidHistory"
 private let historyLimit = 15
 
 struct ContentView: View {
-    @State private var source: String = sampleSource
+    @State private var source: String = HistoryStore.load().first ?? sampleSource
     @State private var svg: String = ""
     @State private var errorMessage: String?
     @State private var theme: String = "default"
-    @State private var showEditor: Bool = true
     @State private var history: [String] = HistoryStore.load()
     @State private var pendingSave: Task<Void, Never>?
 
     private let themes = ["default", "dark", "forest", "neutral"]
 
     var body: some View {
-        HSplitView {
-            if showEditor {
-                editorPane
-                    .frame(minWidth: 320)
-            }
-            renderPane
-                .frame(minWidth: 320)
+        NavigationSplitView {
+            editorPane
+                .navigationSplitViewColumnWidth(min: 280, ideal: 400)
+        } detail: {
+            SVGView(svg: svg)
         }
+        .navigationSplitViewStyle(.balanced)
         .onAppear { render() }
-        .onChange(of: source) { _ in render() }
-        .onChange(of: theme) { _ in render() }
+        .onChange(of: source) { render() }
+        .onChange(of: theme) { render() }
     }
 
     private var editorPane: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button("Paste") { pasteFromClipboard() }
-                Picker("Theme", selection: $theme) {
-                    ForEach(themes, id: \.self) { Text($0).tag($0) }
+            HStack(spacing: 8) {
+                Button {
+                    pasteFromClipboard()
+                } label: {
+                    Image(systemName: "doc.on.clipboard")
                 }
-                .frame(maxWidth: 180)
-                Menu("History") {
+                .help("Paste from clipboard")
+
+                Menu {
+                    Picker(selection: $theme) {
+                        ForEach(themes, id: \.self) { Text($0).tag($0) }
+                    } label: { EmptyView() }
+                    .pickerStyle(.inline)
+                } label: {
+                    Image(systemName: "paintpalette")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Theme: \(theme)")
+
+                Menu {
                     if history.isEmpty {
                         Text("No history yet").disabled(true)
                     } else {
@@ -60,11 +72,22 @@ struct ContentView: View {
                             HistoryStore.save(history)
                         }
                     }
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
                 }
-                .frame(maxWidth: 130)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("History")
+
                 Spacer()
-                Button("Render") { render() }
-                    .keyboardShortcut(.return, modifiers: [.command])
+
+                Button {
+                    render()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .keyboardShortcut(.return, modifiers: [.command])
+                .help("Render (⌘↩)")
             }
             MermaidEditor(text: $source)
                 .border(Color.gray.opacity(0.3))
@@ -76,23 +99,21 @@ struct ContentView: View {
             }
         }
         .padding()
-    }
-
-    private var renderPane: some View {
-        SVGView(svg: svg)
-            .overlay(alignment: .topLeading) {
-                Button {
-                    showEditor.toggle()
-                } label: {
-                    Image(systemName: showEditor ? "sidebar.left" : "sidebar.leading")
-                        .imageScale(.large)
-                        .padding(6)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(alignment: .trailing) {
+            // Hover area at the divider edge. WKWebView in the detail pane
+            // intercepts cursor updates from NavigationSplitView, so place the
+            // resize-cursor zone on the editor side of the seam instead.
+            Color.clear
+                .frame(width: 6)
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.resizeLeftRight.push()
+                    } else {
+                        NSCursor.pop()
+                    }
                 }
-                .buttonStyle(.plain)
-                .padding(8)
-                .help(showEditor ? "Hide editor" : "Show editor")
-            }
+        }
     }
 
     private func pasteFromClipboard() {

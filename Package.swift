@@ -9,7 +9,7 @@ let mmgoBuildDir = ProcessInfo.processInfo.environment["MMGO_BUILD_DIR"]
 
 let package = Package(
     name: "MmgoMac",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     targets: [
         .systemLibrary(
             name: "CMmgo",
