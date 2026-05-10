@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var theme: String = "default"
     @State private var history: [String] = HistoryStore.load()
     @State private var pendingSave: Task<Void, Never>?
+    @StateObject private var web = WebViewHolder()
 
     private let themes = ["default", "dark", "forest", "neutral"]
 
@@ -29,7 +30,26 @@ struct ContentView: View {
             editorPane
                 .navigationSplitViewColumnWidth(min: 280, ideal: 400)
         } detail: {
-            SVGView(svg: svg)
+            SVGView(svg: svg, webView: web.webView)
+                .overlay(alignment: .topTrailing) {
+                    HStack(spacing: 6) {
+                        Button {
+                            copyPNGToClipboard()
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                        .help("Copy image")
+
+                        Button {
+                            savePNGToFile()
+                        } label: {
+                            Image(systemName: "square.and.arrow.down")
+                        }
+                        .help("Save image…")
+                    }
+                    .disabled(svg.isEmpty)
+                    .padding(8)
+                }
         }
         .navigationSplitViewStyle(.balanced)
         .onAppear { render() }
@@ -122,6 +142,49 @@ struct ContentView: View {
         }
     }
 
+    private func copyPNGToClipboard() {
+        snapshotPNG { data in
+            guard let data else { return }
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setData(data, forType: .png)
+        }
+    }
+
+    private func savePNGToFile() {
+        snapshotPNG { data in
+            guard let data else { return }
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.png]
+            panel.nameFieldStringValue = "diagram.png"
+            panel.canCreateDirectories = true
+            if panel.runModal() == .OK, let url = panel.url {
+                do {
+                    try data.write(to: url)
+                } catch {
+                    errorMessage = "Save failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func snapshotPNG(completion: @escaping (Data?) -> Void) {
+        guard !svg.isEmpty else { completion(nil); return }
+        let config = WKSnapshotConfiguration()
+        web.webView.takeSnapshot(with: config) { image, error in
+            guard let image,
+                  let tiff = image.tiffRepresentation,
+                  let rep = NSBitmapImageRep(data: tiff),
+                  let png = rep.representation(using: .png, properties: [:])
+            else {
+                if let error { errorMessage = "Snapshot failed: \(error.localizedDescription)" }
+                completion(nil)
+                return
+            }
+            completion(png)
+        }
+    }
+
     private func render() {
         do {
             svg = try MermaidRenderer.renderSVG(source: source, theme: theme, background: "white")
@@ -177,15 +240,23 @@ private enum HistoryStore {
     }
 }
 
+/// Holds a WKWebView so ContentView can both display it (via SVGView) and
+/// snapshot it for PNG export.
+final class WebViewHolder: ObservableObject {
+    let webView: WKWebView
+    init() {
+        let w = WKWebView()
+        w.setValue(false, forKey: "drawsBackground")
+        self.webView = w
+    }
+}
+
 /// Display an SVG string inside a WKWebView.
 struct SVGView: NSViewRepresentable {
     let svg: String
+    let webView: WKWebView
 
-    func makeNSView(context: Context) -> WKWebView {
-        let webView = WKWebView()
-        webView.setValue(false, forKey: "drawsBackground")
-        return webView
-    }
+    func makeNSView(context: Context) -> WKWebView { webView }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         let html = """
