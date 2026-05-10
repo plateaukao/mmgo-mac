@@ -17,6 +17,7 @@ C-shared library (`libmmgo.dylib`).
     MmgoMac/                # SwiftUI app
       MmgoMacApp.swift
       ContentView.swift
+      MermaidEditor.swift
       MermaidRenderer.swift
 ```
 
@@ -72,3 +73,21 @@ so the dylib is found at runtime without `DYLD_LIBRARY_PATH`.
 proper bundle, create a small Xcode project, add `Sources/MmgoMac/*.swift`
 to it, link `libmmgo.dylib`, copy it into `Contents/Frameworks`, and set
 `@rpath` to `@executable_path/../Frameworks`.
+
+## Acknowledgements
+
+All of the actual rendering work — Mermaid parsing, graph layout, font-based
+text measurement, and SVG generation — is done by
+[**mmgo**](https://github.com/julianshen/mmgo) by
+[@julianshen](https://github.com/julianshen). This project is just a thin
+SwiftUI shell around its C-shared-library build target. Big thanks to the
+mmgo authors for making a Mermaid renderer that ships as a single static
+binary with no Node.js or headless-browser dependency — without that,
+this app wouldn't exist.
+
+mmgo itself stands on the shoulders of:
+
+- The [Mermaid](https://github.com/mermaid-js/mermaid) project, which
+  defines the diagram syntax this app accepts.
+- [dagre](https://github.com/dagrejs/dagre), whose graph layout
+  algorithms mmgo ports to Go.
