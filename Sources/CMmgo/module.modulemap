@@ -1,0 +1,5 @@
+module CMmgo {
+    header "libmmgo.h"
+    link "mmgo"
+    export *
+}
