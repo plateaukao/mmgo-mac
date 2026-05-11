@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var theme: String = "default"
     @State private var history: [String] = HistoryStore.load()
     @State private var pendingSave: Task<Void, Never>?
+    @State private var showHistory: Bool = false
     @StateObject private var web = WebViewHolder()
 
     private let themes = ["default", "dark", "forest", "neutral"]
@@ -79,25 +80,15 @@ struct ContentView: View {
                 .fixedSize()
                 .help("Theme: \(theme)")
 
-                Menu {
-                    if history.isEmpty {
-                        Text("No history yet").disabled(true)
-                    } else {
-                        ForEach(Array(history.enumerated()), id: \.offset) { _, item in
-                            Button(historyLabel(item)) { source = item }
-                        }
-                        Divider()
-                        Button("Clear history", role: .destructive) {
-                            history.removeAll()
-                            HistoryStore.save(history)
-                        }
-                    }
+                Button {
+                    showHistory.toggle()
                 } label: {
                     Image(systemName: "clock.arrow.circlepath")
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
                 .help("History")
+                .popover(isPresented: $showHistory, arrowEdge: .bottom) {
+                    historyPopover
+                }
 
                 Spacer()
 
@@ -138,8 +129,88 @@ struct ContentView: View {
 
     private func pasteFromClipboard() {
         if let s = NSPasteboard.general.string(forType: .string) {
+            blurEditor()
             source = s
+            render()
         }
+    }
+
+    private func selectHistoryItem(_ item: String) {
+        blurEditor()
+        source = item
+        render()
+        showHistory = false
+    }
+
+    private func removeHistoryItem(at index: Int) {
+        guard history.indices.contains(index) else { return }
+        history.remove(at: index)
+        HistoryStore.save(history)
+    }
+
+    /// Resign first responder so the editor lets external `source` updates
+    /// flow through MermaidEditor.updateNSView (which otherwise skips
+    /// syncs while the text view is focused).
+    private func blurEditor() {
+        NSApp.keyWindow?.makeFirstResponder(nil)
+    }
+
+    @ViewBuilder
+    private var historyPopover: some View {
+        VStack(spacing: 0) {
+            if history.isEmpty {
+                Text("No history yet")
+                    .foregroundColor(.secondary)
+                    .padding()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(history.enumerated()), id: \.offset) { idx, item in
+                            HStack(spacing: 6) {
+                                Button {
+                                    selectHistoryItem(item)
+                                } label: {
+                                    Text(historyLabel(item))
+                                        .lineLimit(1)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    removeHistoryItem(at: idx)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove")
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            if idx < history.count - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+                .frame(maxHeight: 320)
+
+                Divider()
+                Button(role: .destructive) {
+                    history.removeAll()
+                    HistoryStore.save(history)
+                    showHistory = false
+                } label: {
+                    Label("Clear history", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .padding(8)
+                .foregroundColor(.red)
+            }
+        }
+        .frame(width: 260)
     }
 
     private func copyPNGToClipboard() {
