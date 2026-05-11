@@ -32,24 +32,20 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 280, ideal: 400)
         } detail: {
             SVGView(svg: svg, webView: web.webView)
-                .overlay(alignment: .topTrailing) {
-                    HStack(spacing: 6) {
-                        Button {
-                            copyPNGToClipboard()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
+                .toolbar {
+                    ToolbarItemGroup {
+                        Button(action: copyPNGToClipboard) {
+                            Label("Copy PNG", systemImage: "doc.on.doc")
                         }
                         .help("Copy image")
+                        .disabled(svg.isEmpty)
 
-                        Button {
-                            savePNGToFile()
-                        } label: {
-                            Image(systemName: "square.and.arrow.down")
+                        Button(action: savePNGToFile) {
+                            Label("Save PNG…", systemImage: "square.and.arrow.down")
                         }
                         .help("Save image…")
+                        .disabled(svg.isEmpty)
                     }
-                    .disabled(svg.isEmpty)
-                    .padding(8)
                 }
         }
         .navigationSplitViewStyle(.balanced)
@@ -60,46 +56,7 @@ struct ContentView: View {
 
     private var editorPane: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Button {
-                    pasteFromClipboard()
-                } label: {
-                    Image(systemName: "doc.on.clipboard")
-                }
-                .help("Paste from clipboard")
-
-                Menu {
-                    Picker(selection: $theme) {
-                        ForEach(themes, id: \.self) { Text($0).tag($0) }
-                    } label: { EmptyView() }
-                    .pickerStyle(.inline)
-                } label: {
-                    Image(systemName: "paintpalette")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Theme: \(theme)")
-
-                Button {
-                    showHistory.toggle()
-                } label: {
-                    Image(systemName: "clock.arrow.circlepath")
-                }
-                .help("History")
-                .popover(isPresented: $showHistory, arrowEdge: .bottom) {
-                    historyPopover
-                }
-
-                Spacer()
-
-                Button {
-                    render()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .keyboardShortcut(.return, modifiers: [.command])
-                .help("Render (⌘↩)")
-            }
+            editorActionBar
             MermaidEditor(text: $source)
                 .border(Color.gray.opacity(0.3))
             if let err = errorMessage {
@@ -124,6 +81,55 @@ struct ContentView: View {
                         NSCursor.pop()
                     }
                 }
+        }
+    }
+
+    private var editorActionBar: some View {
+        HStack(spacing: 10) {
+            Button(action: pasteFromClipboard) {
+                Image(systemName: "doc.on.clipboard")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Paste from clipboard")
+
+            Menu {
+                Picker(selection: $theme) {
+                    ForEach(themes, id: \.self) { Text($0).tag($0) }
+                } label: { EmptyView() }
+                .pickerStyle(.inline)
+            } label: {
+                Image(systemName: "paintpalette")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Theme: \(theme)")
+
+            Button {
+                showHistory.toggle()
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("History")
+            .popover(isPresented: $showHistory, arrowEdge: .bottom) {
+                historyPopover
+            }
+
+            Spacer()
         }
     }
 
