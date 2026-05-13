@@ -5,8 +5,20 @@ A small SwiftUI macOS app that renders Mermaid diagrams. The renderer is
 the app and hosted in an off-screen `WKWebView`.
 
 The repo is named after [`mmgo`](https://github.com/julianshen/mmgo),
-which was the original rendering backend; see the git history if you
-need that variant.
+which was the original rendering backend; see the git history before
+commit `250034b` if you need that variant.
+
+## Features
+
+- Live preview that re-renders on every keystroke (with an in-flight
+  collapsing queue so bursts don't pile up).
+- Syntax-highlighted Mermaid editor (`NSTextView`-backed).
+- Theme switcher: default / dark / forest / neutral.
+- History popover (last 15 diagrams); editing an existing diagram
+  replaces its slot instead of stacking new entries.
+- Copy PNG / Save PNG… from the rendered output.
+- Self-contained `.app` — no Node, no headless browser, no external
+  dylibs.
 
 ## Layout
 
