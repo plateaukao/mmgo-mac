@@ -7,37 +7,69 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 swift build        # compile
 swift run          # build and launch the SwiftUI app
+./build.sh         # produce a self-contained dist/Mmgo.app
 ```
 
 There is no test target. Lint/format tools are not configured.
 
-The app links against `Frameworks/libmmgo.dylib`, which is **bundled in the repo** (arm64, macOS 14+). The default `MMGO_BUILD_DIR` in `Package.swift` resolves to `<package>/Frameworks` via `#filePath`, so a fresh checkout builds without external dependencies. To use a fresher build from a sibling `mmgo` checkout:
+The app bundles `mermaid.min.js` (v11) and `mermaid.html` as SwiftPM
+resources under `Sources/MmgoMac/Resources/`. They are loaded at runtime
+via `Bundle.module`. There is no external dylib or C dependency.
+
+To update mermaid:
 
 ```bash
-MMGO_BUILD_DIR=/path/to/mmgo/build swift run
-```
-
-If you regenerate the dylib, the deployment-target pin (`-mmacosx-version-min=14.0`) and `-install_name @rpath/libmmgo.dylib` are both load-bearing. Building the dylib without `@rpath` install_name will make `swift run` fail at load time even if linking succeeds.
-
-If cgo signatures change in `mmgo`, copy the regenerated header back in:
-
-```bash
-cp ~/src/mmgo/build/libmmgo.h Sources/CMmgo/libmmgo.h
+curl -fL -o Sources/MmgoMac/Resources/mermaid.min.js \
+  https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js
 ```
 
 ## Architecture
 
-Three-layer stack, all small:
+Two layers:
 
-1. **`Sources/CMmgo/`** — `systemLibrary` SwiftPM target. `module.modulemap` exposes `libmmgo.h` as the `CMmgo` Swift module and declares `link "mmgo"`. The actual `-L`/`-lmmgo`/`-rpath` flags are in `Package.swift` (not the modulemap), because the dylib path is resolved at package-load time from `MMGO_BUILD_DIR`.
+1. **`Sources/MmgoMac/Resources/mermaid.html`** — host page loaded once
+   into a `WKWebView`. Includes `mermaid.min.js` via a relative `<script
+   src>` and exposes a global `renderMermaid(source, theme)` that calls
+   `mermaid.render()` and posts the resulting SVG (or error) back to
+   Swift through `window.webkit.messageHandlers.mermaid`. After each
+   render it sweeps any leftover `[id^="d"]` divs from `<body>` —
+   mermaid.js sometimes leaks a temporary measurement node on parse
+   error, which would otherwise stack up as multiple "Syntax error"
+   views in the page.
 
-2. **`MermaidRenderer.swift`** — the only file that touches C. Wraps `MmgoRenderSVG` / `MmgoFree`. Every C string returned by mmgo (success result *and* error message via the `errOut` out-param) is malloc'd on the Go side and **must** be released with `MmgoFree`; the wrapper does this in `defer`/explicit calls. Don't pass Swift `String` pointers through without going through `withCString` — Go retains nothing.
-
-3. **SwiftUI layer** (`MmgoMacApp`, `ContentView`, `MermaidEditor`, `SVGView`):
-   - `ContentView` re-renders on **every** keystroke via `.onChange(of: source)`. There is no debounce — mmgo is fast enough that this is fine for typical diagrams, but be aware before adding heavy work to the render path.
-   - `MermaidEditor` is an `NSTextView`-backed `NSViewRepresentable` (SwiftUI's `TextEditor` is used only because we need syntax highlighting). Highlighting runs synchronously in `textDidChange` over the full document with regex rules in `MermaidHighlight.rules`.
-   - `SVGView` is a `WKWebView` that reloads HTML on every update. The SVG is embedded directly into an inline HTML document; it is not sandboxed against script-bearing SVGs (mmgo output is trusted).
+2. **SwiftUI layer** (`MmgoMacApp`, `ContentView`, `MermaidEditor`):
+   - `MermaidWebView` (defined inside `ContentView.swift`) owns the
+     `WKWebView`, the navigation delegate, and the script-message
+     handler. It exposes `render(source:theme:)` which forwards to JS
+     via `evaluateJavaScript`. A single-slot pending queue collapses
+     bursts of keystrokes: at most one render in flight plus the latest
+     desired state.
+   - `ContentView` re-renders on every keystroke via `.onChange(of:
+     source)`. The web view's `@Published` `svg` and `errorMessage`
+     drive the UI. The pending-queue inside `MermaidWebView` is what
+     keeps this from piling up — there is no time-based debounce.
+   - `MermaidEditor` is an `NSTextView`-backed `NSViewRepresentable`
+     (SwiftUI's `TextEditor` is bypassed because we need syntax
+     highlighting). Highlighting runs synchronously in `textDidChange`
+     over the full document with regex rules in `MermaidHighlight.rules`.
+   - History: editing an existing entry replaces its slot rather than
+     stacking up new entries. `ContentView` tracks the active baseline
+     in `editingOriginal`; `addToHistory` removes it before inserting
+     the new version, so one diagram in progress = one history slot.
+     Pasting clears the baseline (the pasted text becomes a fresh
+     entry on its first save).
+   - PNG export (`Copy PNG`, `Save PNG…`) uses `WKWebView.takeSnapshot`
+     on the same web view that's showing the diagram.
 
 ## Packaging
 
-`swift run` produces a CLI-style executable in `.build/`, not a `.app`. Shipping a real bundle requires an Xcode project that copies `libmmgo.dylib` into `Contents/Frameworks` and sets the rpath to `@executable_path/../Frameworks` — see README "Packaging as a .app bundle".
+`build.sh` runs `swift build -c release`, assembles `dist/Mmgo.app` with
+the binary in `Contents/MacOS/` and the SwiftPM resource bundle
+(`MmgoMac_MmgoMac.bundle`, which holds `mermaid.min.js` + `mermaid.html`)
+in `Contents/Resources/`, writes `Info.plist`, and ad-hoc codesigns the
+result.
+
+The resource bundle must live in `Contents/Resources/`, not
+`Contents/MacOS/`: `Bundle.module` searches both, but a sub-bundle in
+`Contents/MacOS/` looks like a malformed helper to `codesign --deep` and
+breaks signing.

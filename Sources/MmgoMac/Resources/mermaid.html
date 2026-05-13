@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #fff; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #out { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+  #out svg { max-width: 100%; max-height: 100%; }
+</style>
+<script src="mermaid.min.js"></script>
+</head>
+<body>
+<div id="out"></div>
+<script>
+  let counter = 0;
+  let currentTheme = "default";
+
+  function initMermaid(theme) {
+    currentTheme = theme || "default";
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: currentTheme,
+      securityLevel: "loose",
+    });
+  }
+
+  // mermaid.render(id, src) appends a temporary <div id="d{id}"> to the
+  // document body for measurement. On success it self-cleans; on parse error
+  // it can leave the temp node behind — and that node contains mermaid's own
+  // "Syntax error" SVG. Without sweeping, repeated bad renders stack up
+  // multiple error views in the page.
+  function sweepOrphans() {
+    document.querySelectorAll('body > [id^="d"]').forEach(function (el) {
+      if (el.id !== "out") el.remove();
+    });
+  }
+
+  initMermaid("default");
+
+  async function renderMermaid(source, theme) {
+    if (theme && theme !== currentTheme) initMermaid(theme);
+    counter += 1;
+    const id = "m" + counter;
+    sweepOrphans();
+    try {
+      const { svg } = await mermaid.render(id, source);
+      document.getElementById("out").innerHTML = svg;
+      window.webkit?.messageHandlers?.mermaid?.postMessage({
+        ok: true,
+        svg: svg,
+      });
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      document.getElementById("out").innerHTML = "";
+      window.webkit?.messageHandlers?.mermaid?.postMessage({
+        ok: false,
+        error: msg,
+      });
+    } finally {
+      sweepOrphans();
+    }
+  }
+</script>
+</body>
+</html>

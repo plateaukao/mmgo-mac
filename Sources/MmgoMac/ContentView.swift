@@ -16,13 +16,14 @@ private let historyLimit = 15
 
 struct ContentView: View {
     @State private var source: String = HistoryStore.load().first ?? sampleSource
-    @State private var svg: String = ""
-    @State private var errorMessage: String?
     @State private var theme: String = "default"
     @State private var history: [String] = HistoryStore.load()
     @State private var pendingSave: Task<Void, Never>?
     @State private var showHistory: Bool = false
-    @StateObject private var web = WebViewHolder()
+    /// The history entry the user is currently iterating on. Edits replace
+    /// this entry in place instead of stacking up as new items.
+    @State private var editingOriginal: String? = HistoryStore.load().first
+    @StateObject private var web = MermaidWebView()
 
     private let themes = ["default", "dark", "forest", "neutral"]
 
@@ -31,20 +32,20 @@ struct ContentView: View {
             editorPane
                 .navigationSplitViewColumnWidth(min: 280, ideal: 400)
         } detail: {
-            SVGView(svg: svg, webView: web.webView)
+            MermaidWebContainer(webView: web.webView)
                 .toolbar {
                     ToolbarItemGroup {
                         Button(action: copyPNGToClipboard) {
                             Label("Copy PNG", systemImage: "doc.on.doc")
                         }
                         .help("Copy image")
-                        .disabled(svg.isEmpty)
+                        .disabled(web.svg.isEmpty)
 
                         Button(action: savePNGToFile) {
                             Label("Save PNG…", systemImage: "square.and.arrow.down")
                         }
                         .help("Save image…")
-                        .disabled(svg.isEmpty)
+                        .disabled(web.svg.isEmpty)
                     }
                 }
         }
@@ -59,7 +60,7 @@ struct ContentView: View {
             editorActionBar
             MermaidEditor(text: $source)
                 .border(Color.gray.opacity(0.3))
-            if let err = errorMessage {
+            if let err = web.errorMessage {
                 Text(err)
                     .font(.callout)
                     .foregroundColor(.red)
@@ -137,6 +138,7 @@ struct ContentView: View {
         if let s = NSPasteboard.general.string(forType: .string) {
             blurEditor()
             source = s
+            editingOriginal = nil
             render()
         }
     }
@@ -144,13 +146,15 @@ struct ContentView: View {
     private func selectHistoryItem(_ item: String) {
         blurEditor()
         source = item
+        editingOriginal = item
         render()
         showHistory = false
     }
 
     private func removeHistoryItem(at index: Int) {
         guard history.indices.contains(index) else { return }
-        history.remove(at: index)
+        let removed = history.remove(at: index)
+        if editingOriginal == removed { editingOriginal = nil }
         HistoryStore.save(history)
     }
 
@@ -205,6 +209,7 @@ struct ContentView: View {
                 Divider()
                 Button(role: .destructive) {
                     history.removeAll()
+                    editingOriginal = nil
                     HistoryStore.save(history)
                     showHistory = false
                 } label: {
@@ -236,40 +241,27 @@ struct ContentView: View {
             panel.nameFieldStringValue = "diagram.png"
             panel.canCreateDirectories = true
             if panel.runModal() == .OK, let url = panel.url {
-                do {
-                    try data.write(to: url)
-                } catch {
-                    errorMessage = "Save failed: \(error.localizedDescription)"
-                }
+                try? data.write(to: url)
             }
         }
     }
 
     private func snapshotPNG(completion: @escaping (Data?) -> Void) {
-        guard !svg.isEmpty else { completion(nil); return }
+        guard !web.svg.isEmpty else { completion(nil); return }
         let config = WKSnapshotConfiguration()
-        web.webView.takeSnapshot(with: config) { image, error in
+        web.webView.takeSnapshot(with: config) { image, _ in
             guard let image,
                   let tiff = image.tiffRepresentation,
                   let rep = NSBitmapImageRep(data: tiff),
                   let png = rep.representation(using: .png, properties: [:])
-            else {
-                if let error { errorMessage = "Snapshot failed: \(error.localizedDescription)" }
-                completion(nil)
-                return
-            }
+            else { completion(nil); return }
             completion(png)
         }
     }
 
     private func render() {
-        do {
-            svg = try MermaidRenderer.renderSVG(source: source, theme: theme, background: "white")
-            errorMessage = nil
-            scheduleHistorySave(of: source)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        web.render(source: source, theme: theme)
+        scheduleHistorySave(of: source)
     }
 
     private func scheduleHistorySave(of snapshot: String) {
@@ -287,13 +279,26 @@ struct ContentView: View {
     private func addToHistory(_ entry: String) {
         let trimmed = entry.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        if history.first == entry { return }
+
+        // The baseline represents the prior state of *this* diagram, so the
+        // edit should replace it rather than coexist with it.
+        let baselineToRemove = editingOriginal.flatMap { $0 != entry ? $0 : nil }
+
+        if history.first == entry && baselineToRemove == nil {
+            editingOriginal = entry
+            return
+        }
+
+        if let baseline = baselineToRemove {
+            history.removeAll { $0 == baseline }
+        }
         history.removeAll { $0 == entry }
         history.insert(entry, at: 0)
         if history.count > historyLimit {
             history = Array(history.prefix(historyLimit))
         }
         HistoryStore.save(history)
+        editingOriginal = entry
     }
 
     private func historyLabel(_ s: String) -> String {
@@ -317,35 +322,107 @@ private enum HistoryStore {
     }
 }
 
-/// Holds a WKWebView so ContentView can both display it (via SVGView) and
-/// snapshot it for PNG export.
-final class WebViewHolder: ObservableObject {
+/// Hosts a single WKWebView that loads `mermaid.html` once and renders
+/// diagrams via `mermaid.js`. The latest SVG is mirrored to Swift through
+/// a message handler so Copy/Save PNG can stay enabled.
+@MainActor
+final class MermaidWebView: NSObject, ObservableObject {
+    @Published var svg: String = ""
+    @Published var errorMessage: String? = nil
     let webView: WKWebView
-    init() {
-        let w = WKWebView()
-        w.setValue(false, forKey: "drawsBackground")
-        self.webView = w
+
+    private let bridge: Bridge
+    private var isReady = false
+    private var pendingSource: String?
+    private var pendingTheme: String?
+    private var inflight = false
+
+    override init() {
+        let config = WKWebViewConfiguration()
+        let ucc = WKUserContentController()
+        config.userContentController = ucc
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.setValue(false, forKey: "drawsBackground")
+        self.webView = wv
+        self.bridge = Bridge()
+        super.init()
+
+        bridge.owner = self
+        ucc.add(bridge, name: "mermaid")
+        wv.navigationDelegate = bridge
+
+        if let url = Bundle.module.url(forResource: "mermaid", withExtension: "html") {
+            wv.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        }
+    }
+
+    func render(source: String, theme: String) {
+        pendingSource = source
+        pendingTheme = theme
+        pump()
+    }
+
+    fileprivate func didFinishLoad() {
+        isReady = true
+        pump()
+    }
+
+    fileprivate func receive(message body: Any) {
+        inflight = false
+        if let dict = body as? [String: Any] {
+            if let ok = dict["ok"] as? Bool, ok {
+                self.svg = dict["svg"] as? String ?? ""
+                self.errorMessage = nil
+            } else {
+                self.errorMessage = dict["error"] as? String ?? "render error"
+            }
+        }
+        pump()
+    }
+
+    private func pump() {
+        guard isReady, !inflight,
+              let src = pendingSource,
+              let theme = pendingTheme
+        else { return }
+        pendingSource = nil
+        pendingTheme = nil
+        inflight = true
+
+        let js = "renderMermaid(\(jsString(src)), \(jsString(theme)))"
+        webView.evaluateJavaScript(js)
+    }
+
+    private func jsString(_ s: String) -> String {
+        guard let data = try? JSONEncoder().encode(s),
+              let json = String(data: data, encoding: .utf8)
+        else { return "\"\"" }
+        return json
+    }
+
+    /// NSObject subclass so WebKit can hold a weak protocol reference without
+    /// forcing `MermaidWebView` itself to inherit from NSObject in an awkward
+    /// way (it already does, but this keeps the message-handler surface tight).
+    private final class Bridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+        weak var owner: MermaidWebView?
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            Task { @MainActor in owner?.didFinishLoad() }
+        }
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
+            let body = message.body
+            Task { @MainActor in owner?.receive(message: body) }
+        }
     }
 }
 
-/// Display an SVG string inside a WKWebView.
-struct SVGView: NSViewRepresentable {
-    let svg: String
+/// SwiftUI wrapper around the shared WKWebView owned by `MermaidWebView`.
+struct MermaidWebContainer: NSViewRepresentable {
     let webView: WKWebView
-
     func makeNSView(context: Context) -> WKWebView { webView }
-
-    func updateNSView(_ webView: WKWebView, context: Context) {
-        let html = """
-        <!doctype html>
-        <html><head><meta charset='utf-8'>
-        <style>
-          html,body { margin:0; padding:0; height:100%; background:#fff; }
-          body { display:flex; align-items:center; justify-content:center; }
-          svg { max-width:100%; max-height:100%; }
-        </style>
-        </head><body>\(svg)</body></html>
-        """
-        webView.loadHTMLString(html, baseURL: nil)
-    }
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
